@@ -24,10 +24,10 @@
 // ─────────────────────────────────────────────────────────────
 const CONFIG = {
   // Wrist upward velocity (pixels/frame, normalised 0-1) to trigger bite start
-  VELOCITY_THRESHOLD: 0.008,
+  VELOCITY_THRESHOLD: 0.003,
 
   // Minimum number of frames wrist must stay above threshold to count
-  MIN_ACTIVE_FRAMES: 4,
+  MIN_ACTIVE_FRAMES: 3,
 
   // After bite recorded, ignore motion for this long (ms)
   COOLDOWN_MS: 1200,
