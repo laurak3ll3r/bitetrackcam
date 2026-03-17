@@ -690,7 +690,7 @@ async function submitSurvey(e) {
   const distraction = ui.fieldDistraction.value;
   const notes       = ui.fieldNotes.value.trim();
 
-  if (!name || !context || !stress || !distraction) {
+  if (!context || !stress || !distraction) {
     showSubmitStatus('Please fill in all required fields.', 'error');
     return;
   }
@@ -701,7 +701,7 @@ async function submitSurvey(e) {
   const avgDur   = biteDurs.length ? +(biteDurs.reduce((s, d) => s + d, 0) / biteDurs.length).toFixed(2) : 0;
   const pace     = mealMs > 0 && bites.length > 0 ? +(bites.length / (mealMs / 60000)).toFixed(2) : 0;
   const date     = new Date().toISOString().slice(0, 10);
-  const identifier = `${name}_${food || 'unknown'}_${date}`;
+  const identifier = `anonymous_${food || 'unknown'}_${date}`;
 
   ui.btnSubmit.disabled = true;
   showSubmitStatus('Sending…', '');
@@ -717,7 +717,7 @@ async function submitSurvey(e) {
       },
       body: JSON.stringify({
         detection_method: 'camera',   // so you can tell apart camera vs gyro data
-        name, food, context, stress, distraction, notes,
+        food, context, stress, distraction, notes,
         meal_time_seconds:  parseFloat((mealMs / 1000).toFixed(1)),
         bite_count:         bites.length,
         avg_bite_duration:  avgDur,
