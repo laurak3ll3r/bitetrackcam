@@ -23,17 +23,17 @@
 // 1. CONFIG
 // ─────────────────────────────────────────────────────────────
 const CONFIG = {
-  // Wrist upward velocity (pixels/frame, normalised 0-1) to trigger bite start
+  // Upward velocity threshold (normalised 0-1 per frame).
+  // A bite is counted when BOTH velocity AND wrist height are above their thresholds simultaneously.
   VELOCITY_THRESHOLD: 0.003,
 
-  // Minimum number of frames wrist must stay above threshold to count
-  MIN_ACTIVE_FRAMES: 3,
+  // Wrist height threshold (normalised 0-1, where 0=top of frame, 1=bottom).
+  // Only count a bite when wrist is in the upper portion of the frame (close to face).
+  // e.g. 0.4 means wrist must be in the top 40% of the frame.
+  WRIST_HEIGHT_THRESHOLD: 0.4,
 
-  // After bite recorded, ignore motion for this long (ms)
+  // After a bite is counted, ignore all motion for this long (ms) — prevents double counts.
   COOLDOWN_MS: 1200,
-
-  // How long signal must settle (ms) before bite is finalised
-  SETTLE_MS: 400,
 
   // How many wrist positions to keep for the rolling graph (10s at ~30fps)
   GRAPH_HISTORY: 300,
@@ -89,7 +89,6 @@ const ui = {
   btnReset:         document.getElementById('btnReset'),
   cameraStatusText: document.getElementById('cameraStatusText'),
   statusBadge:      document.getElementById('statusBadge'),
-  feedCard:         document.getElementById('feedCard'),
   videoEl:          document.getElementById('videoEl'),
   poseCanvas:       document.getElementById('poseCanvas'),
   biteFlash:          document.getElementById('biteFlash'),
@@ -264,10 +263,14 @@ async function poseLoop() {
   }
   state.lastWristY = normY;
 
+  // Track peak velocity seen this session (helps tune threshold)
+  if (!state.peakVelocity) state.peakVelocity = 0;
+  if (velocity > state.peakVelocity) state.peakVelocity = velocity;
+
   // Update corner chips
-  ui.chipWrist.textContent    = `Wrist: ${(normY * 100).toFixed(0)}%`;
-  ui.chipVelocity.textContent = `↑ ${velocity.toFixed(4)}`;
-  ui.velocityLabel.textContent = `vel: ${velocity.toFixed(4)}`;
+  ui.chipWrist.textContent     = `Wrist: ${(normY * 100).toFixed(0)}%`;
+  ui.chipVelocity.textContent  = `↑ now: ${velocity.toFixed(4)} | peak: ${state.peakVelocity.toFixed(4)}`;
+  ui.velocityLabel.textContent = `vel: ${velocity.toFixed(4)} | peak: ${state.peakVelocity.toFixed(4)}`;
 
   // Update rolling graph
   updateWristGraph(normY, velocity);
@@ -283,62 +286,45 @@ async function poseLoop() {
 // ─────────────────────────────────────────────────────────────
 
 /**
- * Detects one bite per full wrist arc (up toward face, back down).
+ * Dual-threshold bite detector.
+ *
+ * A bite is counted instantly when BOTH conditions are true simultaneously:
+ *   1. Wrist upward velocity >= VELOCITY_THRESHOLD  (wrist is moving up fast enough)
+ *   2. Wrist Y position     <= WRIST_HEIGHT_THRESHOLD (wrist is high in frame = near face)
+ *
+ * After a bite is counted, a cooldown period blocks the next detection
+ * to prevent the same movement being counted multiple times.
  *
  * @param {number} velocity  Upward velocity (positive = wrist moving up)
- * @param {number} normY     Normalised wrist Y position (0=top, 1=bottom)
+ * @param {number} normY     Normalised wrist Y (0 = top of frame, 1 = bottom)
  */
 function detectBite(velocity, normY) {
   const now        = Date.now();
   const inCooldown = (now - state.lastBiteEndTime) < CONFIG.COOLDOWN_MS;
 
-  if (state.bitePhase === 'idle') {
-    // ── IDLE → ACTIVE: wrist starts moving upward strongly
-    if (velocity >= CONFIG.VELOCITY_THRESHOLD && !inCooldown) {
-      state.activeFrames++;
-      if (state.activeFrames >= CONFIG.MIN_ACTIVE_FRAMES) {
-        state.bitePhase    = 'active';
-        state.biteStartTime = now;
-        state.activeFrames  = 0;
-        setPhasePill('active');
-      }
-    } else {
-      state.activeFrames = 0;
-    }
+  if (inCooldown) {
+    setPhasePill('settling');
+    return;
+  }
 
-  } else if (state.bitePhase === 'active') {
-    // ── ACTIVE: wrist is on its way up
-    if (velocity < CONFIG.VELOCITY_THRESHOLD) {
-      state.bitePhase   = 'settling';
-      state.settleStart = now;
-      setPhasePill('settling');
-    }
-    if (now - state.biteStartTime > 4000) {
-      state.bitePhase    = 'idle';
-      state.biteStartTime = null;
-      state.settleStart   = null;
-      setPhasePill('idle');
-    }
+  // Both lines above threshold = bite
+  const velocityAbove = velocity >= CONFIG.VELOCITY_THRESHOLD;
+  const wristHighEnough = normY <= CONFIG.WRIST_HEIGHT_THRESHOLD;
 
-  } else if (state.bitePhase === 'settling') {
-    if (velocity >= CONFIG.VELOCITY_THRESHOLD) {
-      state.bitePhase   = 'active';
-      state.settleStart = null;
-      setPhasePill('active');
-    } else if (now - state.settleStart >= CONFIG.SETTLE_MS) {
-      const duration = state.settleStart - state.biteStartTime;
-
-      if (duration >= 150 && duration <= 3000) {
-        recordBite(state.biteStartTime, state.settleStart, duration);
-      }
-
-      state.lastBiteEndTime = now;
-      state.bitePhase       = 'idle';
-      state.biteStartTime   = null;
-      state.settleStart     = null;
-      state.activeFrames    = 0;
-      setPhasePill('idle');
-    }
+  if (velocityAbove && wristHighEnough) {
+    // Count the bite immediately
+    const now2 = Date.now();
+    recordBite(now2, now2, 0); // duration 0 — instantaneous detection
+    state.lastBiteEndTime = now2;
+    state.bitePhase = 'idle';
+    setPhasePill('idle');
+  } else if (velocityAbove) {
+    // Velocity is there but wrist not high enough yet
+    state.bitePhase = 'active';
+    setPhasePill('active');
+  } else {
+    state.bitePhase = 'idle';
+    setPhasePill('idle');
   }
 }
 
@@ -417,14 +403,24 @@ function updateWristGraph(normY, velocity) {
   });
   wristCtx.stroke();
 
-  // Threshold line
-  const threshY = h / 2 - (CONFIG.VELOCITY_THRESHOLD * h * 8);
+  // Velocity threshold line (red dashed) — centred around h/2
+  const velThreshY = h / 2 - (CONFIG.VELOCITY_THRESHOLD * h * 8);
   wristCtx.beginPath();
   wristCtx.setLineDash([4, 3]);
-  wristCtx.strokeStyle = 'rgba(192,57,43,0.5)';
-  wristCtx.lineWidth = 1;
-  wristCtx.moveTo(0, threshY);
-  wristCtx.lineTo(w, threshY);
+  wristCtx.strokeStyle = 'rgba(192,57,43,0.6)';
+  wristCtx.lineWidth = 1.5;
+  wristCtx.moveTo(0, velThreshY);
+  wristCtx.lineTo(w, velThreshY);
+  wristCtx.stroke();
+
+  // Wrist height threshold line (blue dashed) — on the wrist Y scale
+  const heightThreshY = CONFIG.WRIST_HEIGHT_THRESHOLD * h;
+  wristCtx.beginPath();
+  wristCtx.setLineDash([4, 3]);
+  wristCtx.strokeStyle = 'rgba(55,48,163,0.6)';
+  wristCtx.lineWidth = 1.5;
+  wristCtx.moveTo(0, heightThreshY);
+  wristCtx.lineTo(w, heightThreshY);
   wristCtx.stroke();
   wristCtx.setLineDash([]);
 }
@@ -441,10 +437,9 @@ function startMeal() {
     bites: [],
     bitePhase: 'idle',
     biteStartTime: null,
-    settleStart: null,
-    activeFrames: 0,
     lastBiteEndTime: 0,
     lastWristY: null,
+    peakVelocity: 0,
   });
 
   ui.timelineTrack.querySelectorAll('.timeline-tick').forEach(t => t.remove());
@@ -484,8 +479,7 @@ function resetAll() {
   Object.assign(state, {
     mealActive: false, mealStartTime: null, mealEndTime: null,
     bites: [], bitePhase: 'idle', biteStartTime: null,
-    settleStart: null, activeFrames: 0, lastBiteEndTime: 0,
-    lastWristY: null, wristHistory: [], cameraReady: false,
+    lastBiteEndTime: 0, lastWristY: null, wristHistory: [], cameraReady: false,
     stream: null, animFrame: null,
   });
 
@@ -502,7 +496,6 @@ function resetAll() {
   ui.timelineEnd.textContent = '—';
   ui.summaryCard.hidden      = true;
   ui.surveyCard.hidden       = true;
-  ui.feedCard.hidden         = true;
   ui.surveyForm.reset();
   ui.submitStatus.hidden     = true;
   ui.btnSubmit.disabled      = false;
