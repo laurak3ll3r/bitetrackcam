@@ -25,12 +25,12 @@
 const CONFIG = {
   // Upward velocity threshold (normalised 0-1 per frame).
   // A bite is counted when BOTH velocity AND wrist height are above their thresholds simultaneously.
-  VELOCITY_THRESHOLD: 0.003,
+  VELOCITY_THRESHOLD: 0.002,
 
   // Wrist height threshold (normalised 0-1, where 0=top of frame, 1=bottom).
-  // Only count a bite when wrist is in the upper portion of the frame (close to face).
-  // e.g. 0.4 means wrist must be in the top 40% of the frame.
-  WRIST_HEIGHT_THRESHOLD: 0.4,
+  // 0.7 means wrist must be in the top 70% of frame — covers most phone positions.
+  // Watch the orange line in the graph while eating to see where your wrist actually goes.
+  WRIST_HEIGHT_THRESHOLD: 0.7,
 
   // After a bite is counted, ignore all motion for this long (ms) — prevents double counts.
   COOLDOWN_MS: 1200,
