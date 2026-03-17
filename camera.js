@@ -76,6 +76,7 @@ const state = {
 
   // Charts
   charts: { durations: null, pace: null, gaps: null },
+  _lastFrameTime: null,
 };
 
 // ─────────────────────────────────────────────────────────────
@@ -91,10 +92,15 @@ const ui = {
   feedCard:         document.getElementById('feedCard'),
   videoEl:          document.getElementById('videoEl'),
   poseCanvas:       document.getElementById('poseCanvas'),
-  biteFlash:        document.getElementById('biteFlash'),
-  wristLabel:       document.getElementById('wristLabel'),
-  wristCanvas:      document.getElementById('wristCanvas'),
-  velocityLabel:    document.getElementById('velocityLabel'),
+  biteFlash:          document.getElementById('biteFlash'),
+  cameraPlaceholder:  document.getElementById('cameraPlaceholder'),
+  chipWrist:          document.getElementById('chipWrist'),
+  chipVelocity:       document.getElementById('chipVelocity'),
+  chipFps:            document.getElementById('chipFps'),
+  phasePill:          document.getElementById('phasePill'),
+  signalPhaseLabel:   document.getElementById('signalPhaseLabel'),
+  wristCanvas:        document.getElementById('wristCanvas'),
+  velocityLabel:      document.getElementById('velocityLabel'),
   biteIndicator:    document.getElementById('biteIndicator'),
   statMealTime:     document.getElementById('statMealTime'),
   statBites:        document.getElementById('statBites'),
@@ -159,8 +165,12 @@ async function enableCamera() {
     ui.poseCanvas.width  = ui.videoEl.videoWidth;
     ui.poseCanvas.height = ui.videoEl.videoHeight;
 
+    // Show video feed, hide placeholder
+    ui.videoEl.classList.add('visible');
+    ui.cameraPlaceholder.classList.add('hidden');
+    ui.chipFps.textContent = 'model ready';
+
     state.cameraReady = true;
-    ui.feedCard.hidden = false;
     ui.btnStart.disabled = false;
     setCameraStatus('Camera active ✓', true);
     setStatusBadge('ready');
@@ -197,8 +207,17 @@ async function poseLoop() {
   const ctx = ui.poseCanvas.getContext('2d');
   ctx.clearRect(0, 0, ui.poseCanvas.width, ui.poseCanvas.height);
 
+  // FPS counter
+  const now2 = performance.now();
+  if (state._lastFrameTime) {
+    const fps = Math.round(1000 / (now2 - state._lastFrameTime));
+    ui.chipFps.textContent = `${fps} fps`;
+  }
+  state._lastFrameTime = now2;
+
   if (!poses || poses.length === 0) {
-    ui.wristLabel.textContent = 'Wrist: not visible';
+    ui.chipWrist.textContent    = 'Wrist: not visible';
+    ui.chipVelocity.textContent = '↑ 0.000';
     updateWristGraph(null, 0);
     return;
   }
@@ -225,7 +244,8 @@ async function poseLoop() {
   drawKeypoints(ctx, keypoints);
 
   if (!wrist) {
-    ui.wristLabel.textContent = 'Wrist: not visible';
+    ui.chipWrist.textContent    = 'Wrist: not visible';
+    ui.chipVelocity.textContent = '↑ 0.000';
     state.lastWristY = null;
     updateWristGraph(null, 0);
     return;
@@ -244,9 +264,10 @@ async function poseLoop() {
   }
   state.lastWristY = normY;
 
-  // Update wrist height label
-  ui.wristLabel.textContent = `Wrist: ${(normY * 100).toFixed(0)}% ↑${(velocity * 1000).toFixed(1)}`;
-  ui.velocityLabel.textContent = `velocity: ${velocity.toFixed(4)}`;
+  // Update corner chips
+  ui.chipWrist.textContent    = `Wrist: ${(normY * 100).toFixed(0)}%`;
+  ui.chipVelocity.textContent = `↑ ${velocity.toFixed(4)}`;
+  ui.velocityLabel.textContent = `vel: ${velocity.toFixed(4)}`;
 
   // Update rolling graph
   updateWristGraph(normY, velocity);
@@ -279,32 +300,32 @@ function detectBite(velocity, normY) {
         state.bitePhase    = 'active';
         state.biteStartTime = now;
         state.activeFrames  = 0;
+        setPhasePill('active');
       }
     } else {
-      state.activeFrames = 0; // reset if not consistently rising
+      state.activeFrames = 0;
     }
 
   } else if (state.bitePhase === 'active') {
     // ── ACTIVE: wrist is on its way up
     if (velocity < CONFIG.VELOCITY_THRESHOLD) {
-      // Velocity dropped — wrist has peaked or is returning
       state.bitePhase   = 'settling';
       state.settleStart = now;
+      setPhasePill('settling');
     }
-    // Safety timeout — discard if arm motion runs impossibly long
     if (now - state.biteStartTime > 4000) {
       state.bitePhase    = 'idle';
       state.biteStartTime = null;
       state.settleStart   = null;
+      setPhasePill('idle');
     }
 
   } else if (state.bitePhase === 'settling') {
     if (velocity >= CONFIG.VELOCITY_THRESHOLD) {
-      // Wrist rising again — still part of the same arc
       state.bitePhase   = 'active';
       state.settleStart = null;
+      setPhasePill('active');
     } else if (now - state.settleStart >= CONFIG.SETTLE_MS) {
-      // Wrist has been still long enough — finalise the bite
       const duration = state.settleStart - state.biteStartTime;
 
       if (duration >= 150 && duration <= 3000) {
@@ -316,6 +337,7 @@ function detectBite(velocity, normY) {
       state.biteStartTime   = null;
       state.settleStart     = null;
       state.activeFrames    = 0;
+      setPhasePill('idle');
     }
   }
 }
@@ -490,6 +512,13 @@ function resetAll() {
   ui.btnEnd.disabled         = true;
   setCameraStatus('Not started', 'neutral');
   setStatusBadge('idle');
+  setPhasePill('idle');
+  if (ui.signalPhaseLabel) ui.signalPhaseLabel.textContent = '(waiting)';
+  if (ui.chipFps) ui.chipFps.textContent = 'model loading…';
+  if (ui.chipWrist) ui.chipWrist.textContent = 'Wrist: —';
+  if (ui.chipVelocity) ui.chipVelocity.textContent = '↑ 0.000';
+  if (ui.cameraPlaceholder) ui.cameraPlaceholder.classList.remove('hidden');
+  if (ui.videoEl) ui.videoEl.classList.remove('visible');
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -740,6 +769,13 @@ function flashCameraOverlay() {
   ui.biteFlash.classList.add('flash');
   clearTimeout(cameraFlashTimer);
   cameraFlashTimer = setTimeout(() => ui.biteFlash.classList.remove('flash'), 300);
+}
+
+function setPhasePill(phase) {
+  const labels = { idle: 'idle', active: 'wrist rising ↑', settling: 'settling…' };
+  ui.phasePill.textContent  = labels[phase] || phase;
+  ui.phasePill.className    = `phase-pill phase-${phase}`;
+  ui.signalPhaseLabel.textContent = `(${labels[phase] || phase})`;
 }
 
 function setCameraStatus(text, state) {
