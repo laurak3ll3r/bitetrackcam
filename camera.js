@@ -116,7 +116,6 @@ const ui = {
   surveyForm:       document.getElementById('surveyForm'),
   btnSubmit:        document.getElementById('btnSubmit'),
   submitStatus:     document.getElementById('submitStatus'),
-  fieldName:        document.getElementById('fieldName'),
   fieldFood:        document.getElementById('fieldFood'),
   fieldContext:     document.getElementById('fieldContext'),
   fieldStress:      document.getElementById('fieldStress'),
@@ -683,7 +682,6 @@ function renderSummary() {
 async function submitSurvey(e) {
   e.preventDefault();
 
-  const name        = ui.fieldName.value.trim();
   const food        = ui.fieldFood.value.trim();
   const context     = ui.fieldContext.value;
   const stress      = ui.fieldStress.value;
