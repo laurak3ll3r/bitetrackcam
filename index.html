@@ -3,19 +3,21 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <meta name="apple-mobile-web-app-capable" content="yes" />
   <title>BiteTrack — Camera</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
 
+  <!-- TensorFlow.js + MoveNet pose detection -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/tensorflow/4.10.0/tf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.1.3/dist/pose-detection.min.js"></script>
+
+  <!-- Chart.js -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js" defer></script>
 
   <style>
-    /* ── SETUP VIEW: camera feed ────────────────────────── */
+    /* ── Camera feed ──────────────────────────────────────── */
     .camera-wrap {
       position: relative;
       width: 100%;
@@ -25,6 +27,8 @@
       aspect-ratio: 4/3;
       border: 1px solid var(--border);
     }
+
+    /* Placeholder shown before camera is active */
     .camera-placeholder {
       position: absolute;
       inset: 0;
@@ -37,261 +41,358 @@
       font-family: var(--font-mono);
       font-size: 0.8rem;
     }
-    .camera-placeholder .cam-icon { font-size: 2.5rem; opacity: 0.3; }
-    .camera-placeholder.hidden    { display: none; }
+    .camera-placeholder .cam-icon {
+      font-size: 2.5rem;
+      opacity: 0.3;
+    }
+    .camera-placeholder.hidden { display: none; }
+
     #videoEl {
-      position: absolute; inset: 0;
-      width: 100%; height: 100%;
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
       object-fit: cover;
-      transform: scaleX(-1);
+      transform: scaleX(-1); /* mirror — feels natural */
       opacity: 0;
       transition: opacity 0.4s ease;
     }
     #videoEl.visible { opacity: 1; }
+
+    /* Pose overlay canvas — sits on top of video */
     #poseCanvas {
-      position: absolute; inset: 0;
-      width: 100%; height: 100%;
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
       transform: scaleX(-1);
       pointer-events: none;
     }
+
+    /* Orange border flash when bite is detected */
     .camera-bite-flash {
-      position: absolute; inset: 0;
+      position: absolute;
+      inset: 0;
       border: 4px solid var(--accent);
       border-radius: var(--radius-sm);
-      opacity: 0; pointer-events: none;
+      opacity: 0;
+      pointer-events: none;
       transition: opacity 0.08s;
       box-shadow: inset 0 0 20px rgba(212,119,10,0.3);
     }
     .camera-bite-flash.flash { opacity: 1; }
+
+    /* Corner status chips */
     .cam-chip {
       position: absolute;
-      font-family: var(--font-mono); font-size: 0.62rem;
-      padding: 3px 8px; border-radius: 4px;
-      backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+      font-family: var(--font-mono);
+      font-size: 0.62rem;
+      padding: 3px 8px;
+      border-radius: 4px;
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
     }
-    .cam-chip-tl { top: 8px; left: 8px;  background: rgba(0,0,0,0.55); color: rgba(255,255,255,0.8); }
-    .cam-chip-tr { top: 8px; right: 8px; background: rgba(0,0,0,0.55); color: rgba(255,255,255,0.8); }
-    .cam-chip-bl { bottom: 8px; left: 8px; background: rgba(0,0,0,0.55); color: rgba(255,255,255,0.65); }
+    .cam-chip-tl {
+      top: 8px; left: 8px;
+      background: rgba(0,0,0,0.55);
+      color: rgba(255,255,255,0.8);
+    }
+    .cam-chip-tr {
+      top: 8px; right: 8px;
+      background: rgba(0,0,0,0.55);
+      color: rgba(255,255,255,0.8);
+    }
+    .cam-chip-bl {
+      bottom: 8px; left: 8px;
+      background: rgba(0,0,0,0.55);
+      color: rgba(255,255,255,0.65);
+    }
+
+    /* Phase pill — changes colour by detection state */
     .phase-pill {
-      position: absolute; bottom: 8px; right: 8px;
-      font-family: var(--font-mono); font-size: 0.62rem; font-weight: 500;
-      padding: 3px 10px; border-radius: 99px; transition: background 0.2s, color 0.2s;
+      position: absolute;
+      bottom: 8px; right: 8px;
+      font-family: var(--font-mono);
+      font-size: 0.62rem;
+      font-weight: 500;
+      padding: 3px 10px;
+      border-radius: 99px;
+      transition: background 0.2s, color 0.2s;
     }
-    .phase-idle     { background: rgba(50,50,50,0.7);    color: rgba(255,255,255,0.5); }
+    .phase-idle     { background: rgba(50,50,50,0.7);   color: rgba(255,255,255,0.5); }
     .phase-active   { background: rgba(212,119,10,0.85); color: #fff; }
     .phase-settling { background: rgba(46,125,79,0.85);  color: #fff; }
 
-    .legend { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
-    .legend-item { display: flex; align-items: center; gap: 5px; font-family: var(--font-mono); font-size: 0.68rem; color: var(--text-secondary); }
-    .legend-dot  { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
-    .legend-ring { width: 12px; height: 12px; border-radius: 50%; border: 2px solid; flex-shrink: 0; }
-
-    .signal-wrap { margin-top: 12px; }
-    .signal-header { display: flex; justify-content: space-between; align-items: center; font-family: var(--font-mono); font-size: 0.7rem; color: var(--text-secondary); margin-bottom: 5px; }
-    .signal-header strong { color: var(--text-primary); }
-    #wristCanvas { display: block; width: 100%; height: 70px; background: var(--surface-2); border-radius: var(--radius-sm); border: 1px solid var(--border); }
-    .signal-legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 6px; }
-    .signal-legend-item { display: flex; align-items: center; gap: 5px; font-family: var(--font-mono); font-size: 0.65rem; color: var(--text-secondary); }
-    .signal-legend-line { width: 16px; height: 2px; border-radius: 1px; }
-    .signal-legend-dash { width: 16px; height: 0; border-top: 2px dashed; }
-
-    /* ── RECORDING VIEW ─────────────────────────────────── */
-    #recordingScreen {
-      display: none;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      padding: 48px 20px;
-      text-align: center;
-      gap: 28px;
+    /* ── Legend ───────────────────────────────────────────── */
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
     }
-    #recordingScreen.active { display: flex; }
-
-    .recording-pulse-wrap {
-      position: relative;
-      width: 80px; height: 80px;
-      display: flex; align-items: center; justify-content: center;
-    }
-    .recording-ring {
-      position: absolute;
-      width: 80px; height: 80px;
-      border-radius: 50%;
-      border: 2px solid var(--accent);
-      opacity: 0;
-      animation: ringPulse 2.4s ease-out infinite;
-    }
-    .recording-ring:nth-child(2) { animation-delay: 0.8s; }
-    .recording-ring:nth-child(3) { animation-delay: 1.6s; }
-    @keyframes ringPulse {
-      0%   { transform: scale(0.6); opacity: 0.7; }
-      100% { transform: scale(1.8); opacity: 0; }
-    }
-    .recording-dot {
-      width: 20px; height: 20px; border-radius: 50%;
-      background: var(--accent);
-      position: relative; z-index: 1;
-    }
-    .recording-title {
-      font-family: var(--font-display);
-      font-weight: 700;
-      font-size: 1.1rem;
-      color: var(--text-primary);
-      letter-spacing: -0.01em;
-    }
-    .recording-subtitle {
-      font-family: var(--font-mono);
-      font-size: 0.78rem;
-      color: var(--text-secondary);
-      line-height: 1.6;
-      max-width: 260px;
-    }
-    .recording-timer {
-      font-family: var(--font-mono);
-      font-size: 2rem;
-      font-weight: 500;
-      color: var(--text-primary);
-      letter-spacing: -0.03em;
-    }
-
-    /* ── AI FEEDBACK CARD ───────────────────────────────── */
-    .feedback-loading {
+    .legend-item {
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 5px;
       font-family: var(--font-mono);
-      font-size: 0.8rem;
+      font-size: 0.68rem;
       color: var(--text-secondary);
-      padding: 20px 0;
     }
-    .feedback-spinner {
-      width: 16px; height: 16px;
-      border: 2px solid var(--border);
-      border-top-color: var(--accent);
+    .legend-dot {
+      width: 10px;
+      height: 10px;
       border-radius: 50%;
-      animation: spin 0.8s linear infinite;
       flex-shrink: 0;
     }
-    @keyframes spin { to { transform: rotate(360deg); } }
+    .legend-line {
+      width: 18px;
+      height: 2px;
+      flex-shrink: 0;
+      border-radius: 1px;
+    }
+    .legend-ring {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      border: 2px solid;
+      flex-shrink: 0;
+    }
 
-    .feedback-text {
-      font-size: 0.92rem;
-      line-height: 1.75;
-      color: var(--text-primary);
-      white-space: pre-wrap;
-    }
-    .feedback-divider {
-      height: 1px;
-      background: var(--border);
-      margin: 16px 0;
-    }
-    .feedback-meta {
+    /* ── Wrist signal graph ───────────────────────────────── */
+    .signal-wrap { margin-top: 12px; }
+    .signal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
       font-family: var(--font-mono);
       font-size: 0.7rem;
       color: var(--text-secondary);
+      margin-bottom: 5px;
+    }
+    .signal-header strong { color: var(--text-primary); }
+    #wristCanvas {
+      display: block;
+      width: 100%;
+      height: 70px;
+      background: var(--surface-2);
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+    }
+    .signal-legend {
+      display: flex;
+      gap: 14px;
+      margin-top: 6px;
+    }
+    .signal-legend-item {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-family: var(--font-mono);
+      font-size: 0.65rem;
+      color: var(--text-secondary);
+    }
+    .signal-legend-line {
+      width: 16px;
+      height: 2px;
+      border-radius: 1px;
+    }
+    .signal-legend-dash {
+      width: 16px;
+      height: 0;
+      border-top: 2px dashed;
     }
   </style>
 </head>
 <body>
 
   <header class="app-header">
-    <div class="logo"><span class="logo-dot"></span>BiteTrack</div>
+    <div class="logo">
+      <span class="logo-dot"></span>
+      BiteTrack
+    </div>
     <div id="statusBadge" class="status-badge status-idle">Idle</div>
   </header>
 
   <main class="main-content">
 
-    <!-- ══════════════════════════════════════════════════════
-         SETUP VIEW — visible before meal starts
-    ══════════════════════════════════════════════════════ -->
-    <div id="setupView">
+    <!-- ── CAMERA SETUP CARD ─────────────────────────────── -->
+    <section class="card">
+      <h2 class="card-title">Camera Setup</h2>
+      <p class="card-subtitle">
+        Position your device so the camera can see your hand and upper body while eating.
+        The tracker will detect wrist movement to count bites.
+      </p>
 
-      <section class="card">
-        <h2 class="card-title">Camera Setup</h2>
-        <p class="card-subtitle">
-          Position your device so the camera can see your hand and upper body.
-          Check that the lines spike above the dashed thresholds when you raise your hand.
-        </p>
+      <!-- Live camera feed — always visible once enabled -->
+      <div class="camera-wrap" id="cameraWrap">
 
-        <div class="camera-wrap">
-          <div class="camera-placeholder" id="cameraPlaceholder">
-            <span class="cam-icon">📷</span>
-            <span>Camera not yet active</span>
-          </div>
-          <video id="videoEl" autoplay playsinline muted></video>
-          <canvas id="poseCanvas"></canvas>
-          <div class="camera-bite-flash" id="biteFlash"></div>
-          <div class="cam-chip cam-chip-tl" id="chipWrist">Wrist: —</div>
-          <div class="cam-chip cam-chip-tr" id="chipVelocity">↑ 0.000</div>
-          <div class="cam-chip cam-chip-bl" id="chipFps">model loading…</div>
-          <div class="phase-pill phase-idle" id="phasePill">idle</div>
+        <!-- Shown before camera starts -->
+        <div class="camera-placeholder" id="cameraPlaceholder">
+          <span class="cam-icon">📷</span>
+          <span>Camera not yet active</span>
         </div>
 
-        <div class="legend">
-          <div class="legend-item"><div class="legend-dot" style="background:rgba(212,119,10,0.7)"></div>Body keypoints</div>
-          <div class="legend-item"><div class="legend-ring" style="border-color:rgba(255,255,255,0.8)"></div>Wrist (inactive)</div>
-          <div class="legend-item"><div class="legend-ring" style="border-color:rgba(212,119,10,1)"></div>Wrist rising</div>
-        </div>
+        <video id="videoEl" autoplay playsinline muted></video>
+        <canvas id="poseCanvas"></canvas>
+        <div class="camera-bite-flash" id="biteFlash"></div>
 
-        <div class="signal-wrap">
-          <div class="signal-header">
-            <span>Wrist signal <strong id="signalPhaseLabel">(waiting)</strong></span>
-            <span id="velocityLabel">vel: 0.0000</span>
-          </div>
-          <canvas id="wristCanvas"></canvas>
-          <div class="signal-legend">
-            <div class="signal-legend-item"><div class="signal-legend-line" style="background:rgba(212,119,10,0.8)"></div>Wrist height</div>
-            <div class="signal-legend-item"><div class="signal-legend-line" style="background:rgba(46,125,79,0.8)"></div>Velocity</div>
-            <div class="signal-legend-item"><div class="signal-legend-dash" style="border-color:rgba(192,57,43,0.6)"></div>Velocity threshold</div>
-            <div class="signal-legend-item"><div class="signal-legend-dash" style="border-color:rgba(55,48,163,0.6)"></div>Height threshold</div>
-          </div>
-        </div>
-
-        <button class="btn btn-primary" id="btnCamera" style="margin-top:14px;width:100%">Enable Camera</button>
-        <div class="sensor-status" style="margin-top:8px">
-          Status: <span id="cameraStatusText" style="color:var(--text-secondary)">Not started</span>
-        </div>
-      </section>
-
-      <section class="card">
-        <h2 class="card-title">Ready to eat?</h2>
-        <p class="card-subtitle">Once you press Start Meal the screen will go quiet — just eat normally. The End Meal button will always be visible.</p>
-        <button class="btn btn-success btn-full" id="btnStart" disabled>Start Meal</button>
-      </section>
-
-    </div><!-- /setupView -->
-
-    <!-- ══════════════════════════════════════════════════════
-         RECORDING VIEW — shown during the meal
-    ══════════════════════════════════════════════════════ -->
-    <div id="recordingScreen">
-      <div class="recording-pulse-wrap">
-        <div class="recording-ring"></div>
-        <div class="recording-ring"></div>
-        <div class="recording-ring"></div>
-        <div class="recording-dot"></div>
+        <!-- Corner info chips -->
+        <div class="cam-chip cam-chip-tl" id="chipWrist">Wrist: —</div>
+        <div class="cam-chip cam-chip-tr" id="chipVelocity">↑ 0.000</div>
+        <div class="cam-chip cam-chip-bl" id="chipFps">model loading…</div>
+        <div class="phase-pill phase-idle" id="phasePill">idle</div>
       </div>
-      <div>
-        <div class="recording-title">Recording your meal</div>
-        <div class="recording-subtitle" style="margin-top:6px">Just eat naturally — we'll show you your patterns when you're done.</div>
+
+      <!-- Visual legend explaining what colours mean -->
+      <div class="legend">
+        <div class="legend-item">
+          <div class="legend-dot" style="background:rgba(212,119,10,0.7)"></div>
+          Body keypoints
+        </div>
+        <div class="legend-item">
+          <div class="legend-ring" style="border-color:rgba(255,255,255,0.8)"></div>
+          Wrist (inactive)
+        </div>
+        <div class="legend-item">
+          <div class="legend-ring" style="border-color:rgba(212,119,10,1)"></div>
+          Wrist rising → bite
+        </div>
+        <div class="legend-item">
+          <div class="legend-dot" style="background:var(--accent); width:12px; height:4px; border-radius:2px"></div>
+          Border flash = bite counted
+        </div>
       </div>
-      <div class="recording-timer" id="recordingTimer">0:00</div>
-      <button class="btn btn-danger" id="btnEnd" style="width:180px">End Meal</button>
-      <button class="btn btn-ghost" id="btnReset" style="width:180px;margin-top:-12px">Reset</button>
-    </div>
 
-    <!-- ══════════════════════════════════════════════════════
-         POST-MEAL: survey + AI feedback
-    ══════════════════════════════════════════════════════ -->
+      <!-- Wrist velocity signal graph -->
+      <div class="signal-wrap">
+        <div class="signal-header">
+          <span>Wrist signal <strong id="signalPhaseLabel">(waiting)</strong></span>
+          <span id="velocityLabel">vel: 0.0000</span>
+        </div>
+        <canvas id="wristCanvas"></canvas>
+        <div class="signal-legend">
+          <div class="signal-legend-item">
+            <div class="signal-legend-line" style="background:rgba(212,119,10,0.8)"></div>
+            Wrist height
+          </div>
+          <div class="signal-legend-item">
+            <div class="signal-legend-line" style="background:rgba(46,125,79,0.8)"></div>
+            Upward velocity
+          </div>
+          <div class="signal-legend-item">
+            <div class="signal-legend-dash" style="border-color:rgba(192,57,43,0.6)"></div>
+            Velocity threshold
+          </div>
+          <div class="signal-legend-item">
+            <div class="signal-legend-dash" style="border-color:rgba(55,48,163,0.6)"></div>
+            Wrist height threshold
+          </div>
+        </div>
+      </div>
 
-    <!-- Survey -->
+      <button class="btn btn-primary" id="btnCamera" style="margin-top:14px;width:100%">
+        Enable Camera
+      </button>
+      <div class="sensor-status" style="margin-top:8px">
+        Status: <span id="cameraStatusText" style="color:var(--text-secondary)">Not started</span>
+      </div>
+    </section>
+
+    <!-- ── MEAL CONTROLS ────────────────────────────────── -->
+    <section class="card">
+      <h2 class="card-title">Meal Controls</h2>
+      <div class="controls-row">
+        <button class="btn btn-success" id="btnStart" disabled>Start Meal</button>
+        <button class="btn btn-danger"  id="btnEnd"   disabled>End Meal</button>
+        <button class="btn btn-ghost"   id="btnReset">Reset</button>
+      </div>
+    </section>
+
+    <!-- ── LIVE STATS ───────────────────────────────────── -->
+    <section class="card">
+      <h2 class="card-title">Live Stats</h2>
+      <div class="stats-grid">
+        <div class="stat-cell">
+          <div class="stat-value" id="statMealTime">0:00</div>
+          <div class="stat-label">Meal Time</div>
+        </div>
+        <div class="stat-cell">
+          <div class="stat-value" id="statBites">0</div>
+          <div class="stat-label">Bites</div>
+        </div>
+        <div class="stat-cell">
+          <div class="stat-value" id="statAvgDuration">0.0s</div>
+          <div class="stat-label">Avg Duration</div>
+        </div>
+        <div class="stat-cell">
+          <div class="stat-value" id="statPace">0.0</div>
+          <div class="stat-label">Bites / min</div>
+        </div>
+      </div>
+      <div class="bite-indicator" id="biteIndicator">
+        <span class="bite-flash-dot"></span>
+        Bite detected!
+      </div>
+    </section>
+
+    <!-- ── TIMELINE ─────────────────────────────────────── -->
+    <section class="card">
+      <h2 class="card-title">Bite Timeline</h2>
+      <div class="timeline-track" id="timelineTrack">
+        <div class="timeline-rail"></div>
+      </div>
+      <div class="timeline-labels">
+        <span>0:00</span>
+        <span id="timelineEnd">—</span>
+      </div>
+    </section>
+
+    <!-- ── POST-MEAL SUMMARY ─────────────────────────────── -->
+    <section class="card" id="summaryCard" hidden>
+      <h2 class="card-title">Meal Summary</h2>
+      <div class="summary-hero">
+        <div class="summary-hero-item">
+          <div class="summary-hero-value" id="sumMealTime">—</div>
+          <div class="summary-hero-label">Duration</div>
+        </div>
+        <div class="summary-hero-item">
+          <div class="summary-hero-value" id="sumBites">—</div>
+          <div class="summary-hero-label">Bites</div>
+        </div>
+        <div class="summary-hero-item">
+          <div class="summary-hero-value" id="sumAvg">—</div>
+          <div class="summary-hero-label">Avg Bite</div>
+        </div>
+        <div class="summary-hero-item">
+          <div class="summary-hero-value" id="sumPace">—</div>
+          <div class="summary-hero-label">Bites/min</div>
+        </div>
+      </div>
+      <div class="chart-block">
+        <div class="chart-title">Bite Durations</div>
+        <div class="chart-subtitle">Duration of each individual bite (seconds)</div>
+        <div class="chart-wrap"><canvas id="chartBiteDurations"></canvas></div>
+      </div>
+      <div class="chart-block">
+        <div class="chart-title">Eating Pace Over Time</div>
+        <div class="chart-subtitle">Rolling bites per minute across the meal</div>
+        <div class="chart-wrap"><canvas id="chartPace"></canvas></div>
+      </div>
+      <div class="chart-block">
+        <div class="chart-title">Time Between Bites</div>
+        <div class="chart-subtitle">Pause duration before each bite (seconds)</div>
+        <div class="chart-wrap"><canvas id="chartGaps"></canvas></div>
+      </div>
+    </section>
+
+    <!-- ── SURVEY ────────────────────────────────────────── -->
     <section class="card" id="surveyCard" hidden>
       <h2 class="card-title">Post-Meal Reflection</h2>
-      <p class="card-subtitle">Answer a few quick questions so we can give you personalised feedback.</p>
+      <p class="card-subtitle">Help us understand your eating context.</p>
       <form id="surveyForm" novalidate>
-
         <div class="field">
           <label for="fieldFood">What did you eat?</label>
-          <input type="text" id="fieldFood" placeholder="e.g. pasta with tomato sauce" />
+          <input type="text" id="fieldFood" placeholder="e.g. pasta, sandwich, rice…" />
         </div>
         <div class="field">
           <label for="fieldContext">Eating Context</label>
@@ -299,7 +400,7 @@
             <option value="">Select…</option>
             <option value="alone">Eating alone</option>
             <option value="with_others">Eating with others</option>
-            <option value="public">Eating in a public place</option>
+            <option value="public">Eating in public place</option>
           </select>
         </div>
         <div class="field">
@@ -323,52 +424,13 @@
           <label for="fieldNotes">Notes About the Day</label>
           <textarea id="fieldNotes" rows="3" placeholder="Anything worth noting?"></textarea>
         </div>
-
-        <button type="submit" class="btn btn-primary btn-full" id="btnSubmit">See My Feedback</button>
+        <button type="submit" class="btn btn-primary btn-full" id="btnSubmit">Submit</button>
         <div id="submitStatus" class="submit-status" hidden></div>
       </form>
-    </section>
-
-    <!-- AI Feedback -->
-    <section class="card" id="feedbackCard" hidden>
-      <h2 class="card-title">Your Meal Reflection</h2>
-      <div id="feedbackLoading" class="feedback-loading">
-        <div class="feedback-spinner"></div>
-        Generating your personalised reflection…
-      </div>
-      <div id="feedbackText" class="feedback-text" hidden></div>
-      <div class="feedback-divider" id="feedbackDivider" hidden></div>
-      <div id="feedbackMeta" class="feedback-meta" hidden></div>
-    </section>
-
-    <!-- Post-meal charts (collapsed, for reference) -->
-    <section class="card" id="summaryCard" hidden>
-      <h2 class="card-title">Meal Data</h2>
-      <div class="summary-hero">
-        <div class="summary-hero-item"><div class="summary-hero-value" id="sumMealTime">—</div><div class="summary-hero-label">Duration</div></div>
-        <div class="summary-hero-item"><div class="summary-hero-value" id="sumBites">—</div><div class="summary-hero-label">Bites</div></div>
-        <div class="summary-hero-item"><div class="summary-hero-value" id="sumAvg">—</div><div class="summary-hero-label">Avg Bite</div></div>
-        <div class="summary-hero-item"><div class="summary-hero-value" id="sumPace">—</div><div class="summary-hero-label">Bites/min</div></div>
-      </div>
-      <div class="chart-block">
-        <div class="chart-title">Bite Durations</div>
-        <div class="chart-subtitle">Duration of each individual bite (seconds)</div>
-        <div class="chart-wrap"><canvas id="chartBiteDurations"></canvas></div>
-      </div>
-      <div class="chart-block">
-        <div class="chart-title">Eating Pace Over Time</div>
-        <div class="chart-subtitle">Rolling bites per minute across the meal</div>
-        <div class="chart-wrap"><canvas id="chartPace"></canvas></div>
-      </div>
-      <div class="chart-block">
-        <div class="chart-title">Time Between Bites</div>
-        <div class="chart-subtitle">Pause duration before each bite (seconds)</div>
-        <div class="chart-wrap"><canvas id="chartGaps"></canvas></div>
-      </div>
     </section>
 
   </main>
 
   <script src="camera.js"></script>
 </body>
-</html>
+</html></html>
