@@ -372,21 +372,35 @@ function updateWristGraph(normY, velocity) {
 // ─────────────────────────────────────────────────────────────
 
 function startMeal() {
-  Object.assign(state, {
-    mealActive: true, mealStartTime: Date.now(), mealEndTime: null,
-    bites: [], bitePhase: 'idle', biteStartTime: null,
-    lastBiteEndTime: 0, lastWristY: null, peakVelocity: 0,
-  });
+  console.log('[BiteTrack] startMeal called');
 
-  // Switch views
-  ui.setupView.style.display = 'none';
-  ui.recordingScreen.classList.add('active');
+  // Reset bite tracking
+  state.mealActive      = true;
+  state.mealStartTime   = Date.now();
+  state.mealEndTime     = null;
+  state.bites           = [];
+  state.bitePhase       = 'idle';
+  state.biteStartTime   = null;
+  state.lastBiteEndTime = 0;
+  state.lastWristY      = null;
+  state.peakVelocity    = 0;
+
+  // Hide setup, show recording screen
+  const setup     = document.getElementById('setupView');
+  const recording = document.getElementById('recordingScreen');
+
+  if (setup)     setup.style.display = 'none';
+  if (recording) recording.classList.add('active');
+
+  console.log('[BiteTrack] view switched, mealStartTime:', state.mealStartTime);
   setStatusBadge('eating');
 
-  // Start the live timer display
+  // Live timer
+  if (state.statsTimer) clearInterval(state.statsTimer);
   state.statsTimer = setInterval(() => {
     const elapsed = Date.now() - state.mealStartTime;
-    ui.recordingTimer.textContent = formatDuration(elapsed);
+    const el = document.getElementById('recordingTimer');
+    if (el) el.textContent = formatDuration(elapsed);
   }, 500);
 }
 
@@ -697,4 +711,4 @@ ui.btnCamera.addEventListener('click',   enableCamera);
 ui.btnStart.addEventListener('click',    startMeal);
 ui.btnEnd.addEventListener('click',      endMeal);
 ui.btnReset.addEventListener('click',    resetAll);
-ui.surveyForm.addEventListener('submit', submitSurvey);rveyForm.addEventListener('submit', submitSurvey);
+ui.surveyForm.addEventListener('submit', submitSurvey);
