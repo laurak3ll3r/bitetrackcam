@@ -379,7 +379,7 @@ function startMeal() {
   });
 
   // Switch views
-  ui.setupView.hidden       = true;
+  ui.setupView.style.display = 'none';
   ui.recordingScreen.classList.add('active');
   setStatusBadge('eating');
 
@@ -421,7 +421,7 @@ function resetAll() {
   });
 
   // Restore setup view
-  ui.setupView.hidden = false;
+  ui.setupView.style.display = '';
   ui.recordingScreen.classList.remove('active');
   ui.recordingTimer.textContent = '0:00';
   ui.surveyCard.hidden          = true;
@@ -697,4 +697,4 @@ ui.btnCamera.addEventListener('click',   enableCamera);
 ui.btnStart.addEventListener('click',    startMeal);
 ui.btnEnd.addEventListener('click',      endMeal);
 ui.btnReset.addEventListener('click',    resetAll);
-ui.surveyForm.addEventListener('submit', submitSurvey);
+ui.surveyForm.addEventListener('submit', submitSurvey);rveyForm.addEventListener('submit', submitSurvey);
